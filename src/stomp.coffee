@@ -88,6 +88,8 @@ class Frame
 
   # Split the data before unmarshalling every single STOMP frame.
   # Web socket servers can send multiple frames in a single websocket message.
+  # If the message size exceeds the websocket message size, then a single
+  # frame can be fragmented across multiple messages.
   #
   # `datas` is a string.
   #
@@ -95,8 +97,23 @@ class Frame
   @unmarshall: (datas) ->
     # Ugly list comprehension to split and unmarshall *multiple STOMP frames*
     # contained in a *single WebSocket frame*.
-    # The data are splitted when a NULL byte (follwode by zero or many LF bytes) is found
-    return (unmarshallSingle(data) for data in datas.split(///#{Byte.NULL}#{Byte.LF}*///) when data?.length > 0)
+    # The data is split when a NULL byte (followed by zero or many LF bytes) is
+    # found
+    frames = datas.split(///#{Byte.NULL}#{Byte.LF}*///)
+
+    r =
+      frames:  []
+      partial: ''
+    r.frames = (unmarshallSingle(frame) for frame in frames[0..-2])
+
+    # If this contains a final full message or just a acknowledgement of a PING
+    # without any other content, process this frame, otherwise return the
+    # contents of the buffer to the caller.
+    if frames[-1..] is #{Byte.LF} or frames[-1..].search(///#{Byte.NULL}#{Byte.LF}*$///) isnt -1
+      r.frames.push(unmarshallSingle(frames[-1..]))
+    else
+      r.partial = frames[-1..]
+    return r
 
   # Marshall a Stomp frame
   @marshall: (command, headers, body) ->
@@ -127,6 +144,7 @@ class Client
     @maxWebSocketFrameSize = 16*1024
     # subscription callbacks indexed by subscriber's ID
     @subscriptions = {}
+    @partialData = ''
 
   # ### Debugging
   #
@@ -242,7 +260,11 @@ class Client
         return
       @debug? "<<< #{data}"
       # Handle STOMP frames received from the server
-      for frame in Frame.unmarshall(data)
+      # The unmarshall function returns the frames parsed and any remaining
+      # data from partial frames.
+      unmarshalledData = Frame.unmarshall(@partialData + data)
+      @partialData = unmarshalledData.partial
+      for frame in unmarshalledData.frames
         switch frame.command
           # [CONNECTED Frame](http://stomp.github.com/stomp-specification-1.1.html#CONNECTED_Frame)
           when "CONNECTED"
