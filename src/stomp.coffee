@@ -109,7 +109,7 @@ class Frame
     # If this contains a final full message or just a acknowledgement of a PING
     # without any other content, process this frame, otherwise return the
     # contents of the buffer to the caller.
-    if frames[-1..] is #{Byte.LF} or frames[-1..].search(///#{Byte.NULL}#{Byte.LF}*$///) isnt -1
+    if frames[-1..] is Byte.LF or (frames[-1..].search ///#{Byte.NULL}#{Byte.LF}*$///) isnt -1
       r.frames.push(unmarshallSingle(frames[-1..]))
     else
       r.partial = frames[-1..]
